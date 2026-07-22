@@ -1,0 +1,245 @@
+"""Tests for the Beatbot REST client."""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import pytest
+from aiohttp import ClientResponseError
+
+from beatbot_cloud import (
+    BeatbotAuthenticationError,
+    BeatbotClient,
+    BeatbotConnectionError,
+)
+from beatbot_cloud.const import OAUTH2_TOKEN_URL, REGION_API_BASE_URL
+
+
+class Response:
+    """Small response double."""
+
+    def __init__(self, data, *, status=200, content_type="application/json"):
+        self.status = status
+        self.headers = {"Content-Type": content_type}
+        self.body = data if isinstance(data, str) else json.dumps(data)
+
+    async def text(self):
+        return self.body
+
+
+class Requester:
+    """Record requests and return or raise a configured result."""
+
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    async def __call__(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+def client(result, region="na"):
+    requester = Requester(result)
+    return BeatbotClient(region, requester), requester
+
+
+def envelope(data=None, *, code=200, message=None):
+    return Response({"code": code, "message": message, "data": data})
+
+
+@pytest.mark.parametrize("region", ["cn", "na", "eu"])
+def test_region_and_event_url(region):
+    api, _ = client(envelope(), region)
+    assert api._base_url == REGION_API_BASE_URL[region]
+    assert api.event_stream_url.startswith("wss://")
+
+
+def test_unknown_region():
+    with pytest.raises(ValueError, match="Unknown or missing"):
+        client(envelope(), "moon")
+
+
+def test_event_url_preserves_non_https_scheme():
+    api, _ = client(envelope())
+    api._base_url = "ws://example.test"
+    assert api.event_stream_url == "ws://example.test/openapi/v1/ha/ws"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_request_rejects_auth_status(status):
+    api, _ = client(Response("denied", status=status))
+    with pytest.raises(BeatbotAuthenticationError):
+        await api._request("GET", "/test")
+
+
+async def test_request_rejects_http_error():
+    api, _ = client(Response("failed", status=500))
+    with pytest.raises(BeatbotConnectionError, match="500"):
+        await api._request("GET", "/test")
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (Response("not json", content_type="text/plain"), "non-JSON"),
+        (Response("[]"), "invalid response envelope"),
+        (envelope(code=400, message="bad"), "API error 400: bad"),
+    ],
+)
+async def test_request_rejects_invalid_envelope(response, message):
+    api, _ = client(response)
+    with pytest.raises(BeatbotConnectionError, match=message):
+        await api._request("GET", "/test")
+
+
+async def test_request_forwards_options_and_returns_data():
+    api, requester = client(envelope({"ok": True}))
+    result = await api._request(
+        "POST", "/test", params={"a": "b"}, json_body={"value": 1}
+    )
+    assert result == {"ok": True}
+    method, url, kwargs = requester.calls[0]
+    assert method == "POST"
+    assert url.endswith("/test")
+    assert kwargs["params"] == {"a": "b"}
+    assert kwargs["json"] == {"value": 1}
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 499])
+async def test_terminal_oauth_error_requires_authentication(status):
+    error = ClientResponseError(
+        SimpleNamespace(real_url=OAUTH2_TOKEN_URL), (), status=status
+    )
+    api, _ = client(error)
+    with pytest.raises(BeatbotAuthenticationError):
+        await api._request("GET", "/test")
+
+
+@pytest.mark.parametrize("status", [408, 429, 500])
+async def test_transient_oauth_error_is_connection_error(status):
+    error = ClientResponseError(
+        SimpleNamespace(real_url=OAUTH2_TOKEN_URL), (), status=status
+    )
+    api, _ = client(error)
+    with pytest.raises(BeatbotConnectionError):
+        await api._request("GET", "/test")
+
+
+async def test_non_oauth_exception_is_connection_error():
+    api, _ = client(RuntimeError("offline"))
+    with pytest.raises(BeatbotConnectionError, match="offline"):
+        await api._request("GET", "/test")
+
+
+async def test_get_devices_empty():
+    api, _ = client(envelope(None))
+    assert await api.get_devices() == []
+
+
+async def test_get_devices_accepts_object_payload():
+    api, _ = client(envelope({"devices": []}))
+    assert await api.get_devices() == []
+
+
+async def test_get_devices_rejects_invalid_string():
+    api, _ = client(envelope("not json"))
+    with pytest.raises(BeatbotConnectionError, match="Invalid discovery"):
+        await api.get_devices()
+
+
+async def test_get_devices_parses_models_and_capabilities():
+    configuration = json.dumps(
+        {"options": [{"value": 0, "label": "quick"}, {"value": None}]}
+    )
+    data = {
+        "devices": [
+            {},
+            {
+                "deviceId": "device-1",
+                "productId": "product-1",
+                "productCategory": "pool_clean_bot",
+                "name": "Pool bot",
+                "model": "Aqua",
+                "isOnline": True,
+                "versions": [None, {"channel": 1, "version": "2.0"}],
+                "capabilities": [
+                    None,
+                    {},
+                    {
+                        "interfaceInfo": "select.work_mode",
+                        "configuration": configuration,
+                        "retrievable": True,
+                        "proactivelyReported": True,
+                    },
+                ],
+            },
+        ]
+    }
+    api, _ = client(envelope(json.dumps(data)))
+    devices = await api.get_devices()
+    assert len(devices) == 1
+    assert devices[0].device_id == "device-1"
+    assert devices[0].work_mode_options == {0: "quick"}
+    assert devices[0].versions[0].version == "2.0"
+    assert devices[0].capabilities["select.work_mode"].retrievable
+
+
+@pytest.mark.parametrize("configuration", ["bad json", [], None])
+def test_invalid_work_mode_configuration(configuration):
+    assert (
+        BeatbotClient._parse_work_mode_options(
+            [{"interfaceInfo": "select.work_mode", "configuration": configuration}]
+        )
+        == {}
+    )
+
+
+async def test_get_device_states():
+    api, _ = client(
+        envelope(
+            {
+                "devices": [
+                    {},
+                    {"deviceId": "d1", "isOnline": True, "states": {"x": 1}},
+                ]
+            }
+        )
+    )
+    assert await api.get_device_states() == {
+        "d1": {"is_online": True, "states": {"x": 1}}
+    }
+
+
+async def test_get_device_states_invalid_string():
+    api, _ = client(envelope("bad"))
+    assert await api.get_device_states() == {}
+
+
+@pytest.mark.parametrize("data", ["bad", [], None])
+async def test_get_device_state_invalid(data):
+    api, _ = client(envelope(data))
+    assert await api.get_device_state("d1") == {}
+
+
+async def test_get_device_state():
+    api, _ = client(envelope({"isOnline": False, "states": {"battery": 10}}))
+    assert await api.get_device_state("d1") == {
+        "is_online": False,
+        "states": {"battery": 10},
+    }
+
+
+async def test_actions():
+    api, requester = client(envelope())
+    await api.send_action("d1", "vacuum.start")
+    await api.set_work_mode("d1", "quick")
+    await api.set_switch("d1", "switch.child_lock", "on")
+    assert [call[2]["json"] for call in requester.calls] == [
+        {"interfaceInfo": "vacuum.start"},
+        {"interfaceInfo": "select.work_mode", "label": "quick"},
+        {"interfaceInfo": "switch.child_lock", "label": "on"},
+    ]
