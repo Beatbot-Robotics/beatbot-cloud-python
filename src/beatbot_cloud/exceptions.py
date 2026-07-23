@@ -13,6 +13,10 @@ class BeatbotConnectionError(BeatbotError):
     """The Beatbot cloud service could not be reached or returned bad data."""
 
 
+class BeatbotEventError(BeatbotConnectionError):
+    """A cloud event did not match the documented event contract."""
+
+
 class BeatbotTokenRejectedError(BeatbotAuthenticationError):
     """An access token was rejected and may be refreshed once."""
 

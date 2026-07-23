@@ -16,9 +16,18 @@ from .exceptions import (
     BeatbotAuthenticationError,
     BeatbotConnectionError,
     BeatbotConnectionReplacedError,
+    BeatbotEventError,
     BeatbotTokenRejectedError,
 )
 from .models import BeatbotEvent
+
+_INTEGER_PROPERTIES = {
+    "vacuum.state",
+    "vacuum.battery",
+    "sensor.error",
+    "select.work_mode",
+}
+_BOOLEAN_PROPERTIES = {"switch.child_lock", "switch.voice_disturb"}
 
 
 class BeatbotEventStream:
@@ -76,9 +85,9 @@ class BeatbotEventStream:
         try:
             event: Any = json.loads(raw)
         except (json.JSONDecodeError, TypeError) as err:
-            raise BeatbotConnectionError("Event is not valid JSON") from err
+            raise BeatbotEventError("Event is not valid JSON") from err
         if not isinstance(event, dict):
-            raise BeatbotConnectionError("Event is not an object")
+            raise BeatbotEventError("Event is not an object")
         event_id = event.get("eventId")
         event_type = event.get("type")
         device_id = event.get("deviceId")
@@ -86,14 +95,38 @@ class BeatbotEventStream:
             isinstance(value, str) and value
             for value in (event_id, event_type, device_id)
         ):
-            raise BeatbotConnectionError("Event is missing eventId, type, or deviceId")
+            raise BeatbotEventError("Event is missing eventId, type, or deviceId")
         payload = event.get("payload")
         if event_type == "device_removed":
             if payload is not None:
-                raise BeatbotConnectionError("device_removed payload is not null")
+                raise BeatbotEventError("device_removed payload is not null")
         elif not isinstance(payload, dict):
-            raise BeatbotConnectionError("Event payload is not an object")
+            raise BeatbotEventError("Event payload is not an object")
+        if event_type == "properties_changed":
+            BeatbotEventStream._validate_property_payload(payload)
+        elif event_type == "status" and not isinstance(payload.get("online"), bool):
+            raise BeatbotEventError("Status event has an invalid online value")
         return BeatbotEvent(event_id, event_type, device_id, payload)
+
+    @staticmethod
+    def _validate_property_payload(payload: dict[str, Any]) -> None:
+        """Validate known property values before exposing an event."""
+        interface_info = payload.get("interfaceInfo")
+        if not isinstance(interface_info, str) or not interface_info:
+            raise BeatbotEventError("Property event is missing a valid interfaceInfo")
+        if "value" not in payload:
+            raise BeatbotEventError("Property event is missing value")
+        value = payload["value"]
+        if interface_info in _INTEGER_PROPERTIES and (
+            not isinstance(value, int) or isinstance(value, bool)
+        ):
+            raise BeatbotEventError(
+                f"Property event has an invalid value for {interface_info}"
+            )
+        if interface_info in _BOOLEAN_PROPERTIES and not isinstance(value, bool):
+            raise BeatbotEventError(
+                f"Property event has an invalid value for {interface_info}"
+            )
 
     def _raise_for_close_code(
         self, code: int | None, error: BaseException | None
