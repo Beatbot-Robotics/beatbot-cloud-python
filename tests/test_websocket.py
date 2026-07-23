@@ -1,5 +1,6 @@
 """Tests for the Beatbot WebSocket transport."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,7 @@ from beatbot_cloud import (
     BeatbotAuthenticationError,
     BeatbotConnectionError,
     BeatbotConnectionReplacedError,
+    BeatbotEventError,
     BeatbotEventStream,
     BeatbotTokenRejectedError,
 )
@@ -41,6 +43,39 @@ def test_parse_event():
     )
     assert event.event_id == "1"
     assert event.payload == {"online": True}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"interfaceInfo": "vacuum.battery"},
+        {"interfaceInfo": "vacuum.battery", "value": None},
+        {"interfaceInfo": "vacuum.battery", "value": True},
+        {"interfaceInfo": "switch.child_lock", "value": 1},
+        {"interfaceInfo": "", "value": 1},
+    ],
+)
+def test_parse_rejects_invalid_property_values(payload):
+    with pytest.raises(BeatbotEventError, match="Property event"):
+        BeatbotEventStream.parse_event(
+            '{"eventId":"1","type":"properties_changed","deviceId":"d",'
+            f'"payload":{json.dumps(payload)}}}'
+        )
+
+
+def test_parse_accepts_unknown_property_with_value():
+    event = BeatbotEventStream.parse_event(
+        '{"eventId":"1","type":"properties_changed","deviceId":"d",'
+        '"payload":{"interfaceInfo":"future.value","value":null}}'
+    )
+    assert event.payload == {"interfaceInfo": "future.value", "value": None}
+
+
+def test_parse_rejects_invalid_status_value():
+    with pytest.raises(BeatbotConnectionError, match="Status event"):
+        BeatbotEventStream.parse_event(
+            '{"eventId":"1","type":"status","deviceId":"d","payload":{"online":"yes"}}'
+        )
 
 
 def test_parse_removed_event():
