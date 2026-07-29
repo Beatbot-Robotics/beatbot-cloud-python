@@ -12,6 +12,7 @@ from beatbot_cloud import (
     BeatbotAuthenticationError,
     BeatbotClient,
     BeatbotConnectionError,
+    BeatbotEvent,
 )
 from beatbot_cloud.const import OAUTH2_TOKEN_URL, REGION_API_BASE_URL
 
@@ -214,6 +215,29 @@ def test_device_applies_and_copies_runtime_state():
     assert device.child_lock
     assert device.voice_disturb
     assert device.is_online
+
+
+def test_state_events_apply_to_device():
+    """State-bearing events interpret their payload in the library."""
+    api, _ = client(envelope())
+    device = api._parse_device({"deviceId": "d1", "isOnline": True})
+    assert device is not None
+
+    changed = BeatbotEvent(
+        "1",
+        "properties_changed",
+        "d1",
+        {"interfaceInfo": "vacuum.battery", "value": 42},
+    ).apply_to(device)
+    online_changed = BeatbotEvent("2", "status", "d1", {"online": False}).apply_to(
+        device
+    )
+
+    assert changed
+    assert online_changed
+    assert device.battery_level == 42
+    assert not device.is_online
+    assert not BeatbotEvent("3", "unknown", "d1", {}).apply_to(device)
 
 
 @pytest.mark.parametrize("configuration", ["bad json", [], None])

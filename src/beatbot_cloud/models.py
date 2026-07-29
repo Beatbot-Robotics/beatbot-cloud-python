@@ -92,3 +92,15 @@ class BeatbotEvent:
     event_type: str
     device_id: str
     payload: dict[str, Any] | None
+
+    def apply_to(self, device: BeatbotDeviceData) -> bool:
+        """Apply a state-bearing event and return whether data changed."""
+        if self.event_type == "properties_changed":
+            assert self.payload is not None
+            device.apply_state({self.payload["interfaceInfo"]: self.payload["value"]})
+            return True
+        if self.event_type == "status":
+            assert self.payload is not None
+            device.apply_state(None, self.payload["online"])
+            return True
+        return False

@@ -85,6 +85,14 @@ def test_parse_removed_event():
     assert event.payload is None
 
 
+def test_parse_rejects_mismatched_added_device():
+    with pytest.raises(BeatbotEventError, match="mismatched"):
+        BeatbotEventStream.parse_event(
+            '{"eventId":"1","type":"device_added","deviceId":"d",'
+            '"payload":{"deviceId":"other"}}'
+        )
+
+
 async def test_connect_and_close():
     websocket = SimpleNamespace(closed=False, close=AsyncMock())
     session = SimpleNamespace(ws_connect=AsyncMock(return_value=websocket))

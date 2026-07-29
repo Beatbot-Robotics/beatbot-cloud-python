@@ -106,6 +106,8 @@ class BeatbotEventStream:
             BeatbotEventStream._validate_property_payload(payload)
         elif event_type == "status" and not isinstance(payload.get("online"), bool):
             raise BeatbotEventError("Status event has an invalid online value")
+        elif event_type == "device_added" and payload.get("deviceId") != device_id:
+            raise BeatbotEventError("device_added payload has a mismatched deviceId")
         return BeatbotEvent(event_id, event_type, device_id, payload)
 
     @staticmethod
