@@ -1,5 +1,6 @@
 """Asynchronous client for the Beatbot cloud API."""
 
+from .auth import decode_access_token
 from .client import BeatbotClient
 from .exceptions import (
     BeatbotAuthenticationError,
@@ -39,4 +40,5 @@ __all__ = [
     "STATUS_BY_CATEGORY",
     "error_mask_for",
     "status_for",
+    "decode_access_token",
 ]

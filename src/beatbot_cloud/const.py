@@ -21,3 +21,8 @@ EVENTS_PATH: Final = "/openapi/v1/ha/ws"
 RESULT_SUCCESS_CODE: Final = 200
 
 INTERFACE_WORK_MODE: Final = "select.work_mode"
+INTERFACE_VACUUM_STATE: Final = "vacuum.state"
+INTERFACE_VACUUM_BATTERY: Final = "vacuum.battery"
+INTERFACE_SENSOR_ERROR: Final = "sensor.error"
+INTERFACE_CHILD_LOCK: Final = "switch.child_lock"
+INTERFACE_VOICE_DISTURB: Final = "switch.voice_disturb"

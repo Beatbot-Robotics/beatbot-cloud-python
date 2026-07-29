@@ -5,6 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .const import (
+    INTERFACE_CHILD_LOCK,
+    INTERFACE_SENSOR_ERROR,
+    INTERFACE_VACUUM_BATTERY,
+    INTERFACE_VACUUM_STATE,
+    INTERFACE_VOICE_DISTURB,
+    INTERFACE_WORK_MODE,
+)
+
 
 @dataclass(slots=True)
 class FirmwareVersion:
@@ -43,6 +52,36 @@ class BeatbotDeviceData:
     model: str = ""
     work_mode_options: dict[int, str] = field(default_factory=dict)
     capabilities: dict[str, BeatbotCapability] = field(default_factory=dict)
+
+    def apply_state(
+        self, states: dict[str, Any] | None, is_online: bool | None = None
+    ) -> None:
+        """Apply a runtime-state response or event to this device."""
+        if states:
+            if INTERFACE_VACUUM_STATE in states:
+                self.work_status = states[INTERFACE_VACUUM_STATE]
+            if INTERFACE_VACUUM_BATTERY in states:
+                self.battery_level = states[INTERFACE_VACUUM_BATTERY]
+            if INTERFACE_SENSOR_ERROR in states:
+                self.error_code = states[INTERFACE_SENSOR_ERROR]
+            if INTERFACE_WORK_MODE in states:
+                self.work_mode = states[INTERFACE_WORK_MODE]
+            if INTERFACE_CHILD_LOCK in states:
+                self.child_lock = states[INTERFACE_CHILD_LOCK]
+            if INTERFACE_VOICE_DISTURB in states:
+                self.voice_disturb = states[INTERFACE_VOICE_DISTURB]
+        if is_online is not None:
+            self.is_online = is_online
+
+    def copy_runtime_state_from(self, other: BeatbotDeviceData) -> None:
+        """Copy the last-known runtime state from another instance."""
+        self.work_status = other.work_status
+        self.work_mode = other.work_mode
+        self.error_code = other.error_code
+        self.battery_level = other.battery_level
+        self.is_online = other.is_online
+        self.child_lock = other.child_lock
+        self.voice_disturb = other.voice_disturb
 
 
 @dataclass(frozen=True, slots=True)

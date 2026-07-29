@@ -188,6 +188,34 @@ async def test_get_devices_parses_models_and_capabilities():
     assert devices[0].capabilities["select.work_mode"].retrievable
 
 
+def test_device_applies_and_copies_runtime_state():
+    """Runtime state is parsed by the library model without dynamic attributes."""
+    api, _ = client(envelope())
+    device = api._parse_device({"deviceId": "d1"})
+    previous = api._parse_device({"deviceId": "d1", "isOnline": True})
+    assert device is not None
+    assert previous is not None
+    previous.apply_state(
+        {
+            "vacuum.state": 5,
+            "vacuum.battery": 80,
+            "sensor.error": 2,
+            "select.work_mode": 1,
+            "switch.child_lock": True,
+            "switch.voice_disturb": True,
+        }
+    )
+    device.copy_runtime_state_from(previous)
+
+    assert device.work_status == 5
+    assert device.battery_level == 80
+    assert device.error_code == 2
+    assert device.work_mode == 1
+    assert device.child_lock
+    assert device.voice_disturb
+    assert device.is_online
+
+
 @pytest.mark.parametrize("configuration", ["bad json", [], None])
 def test_invalid_work_mode_configuration(configuration):
     assert (
