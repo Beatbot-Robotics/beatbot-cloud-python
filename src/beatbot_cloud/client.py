@@ -89,7 +89,7 @@ class BeatbotClient:
                 },
                 timeout=ClientTimeout(total=HTTP_API_TIMEOUT),
             )
-        except ClientError as err:
+        except (TimeoutError, ClientError) as err:
             raise BeatbotConnectionError(str(err)) from err
 
         body = await response.text()

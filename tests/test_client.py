@@ -116,6 +116,12 @@ async def test_client_error_is_connection_error():
         await api._request("GET", "/test")
 
 
+async def test_timeout_is_connection_error():
+    api, _ = client(TimeoutError("timed out"))
+    with pytest.raises(BeatbotConnectionError, match="timed out"):
+        await api._request("GET", "/test")
+
+
 async def test_async_access_token_provider():
     async def access_token():
         return "rotated-token"
