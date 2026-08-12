@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
-from aiohttp import ClientResponseError
+from aiohttp import ClientError
 
 from beatbot_cloud import (
     BeatbotAuthenticationError,
@@ -14,7 +13,7 @@ from beatbot_cloud import (
     BeatbotConnectionError,
     BeatbotEvent,
 )
-from beatbot_cloud.const import OAUTH2_TOKEN_URL, REGION_API_BASE_URL
+from beatbot_cloud.const import REGION_API_BASE_URL
 
 
 class Response:
@@ -29,23 +28,23 @@ class Response:
         return self.body
 
 
-class Requester:
+class Session:
     """Record requests and return or raise a configured result."""
 
     def __init__(self, result):
         self.result = result
         self.calls = []
 
-    async def __call__(self, method, url, **kwargs):
+    async def request(self, method, url, **kwargs):
         self.calls.append((method, url, kwargs))
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
 
 
-def client(result, region="na"):
-    requester = Requester(result)
-    return BeatbotClient(region, requester), requester
+def client(result, region="na", access_token="access-token"):
+    session = Session(result)
+    return BeatbotClient(region, session, access_token), session
 
 
 def envelope(data=None, *, code=200, message=None):
@@ -98,42 +97,40 @@ async def test_request_rejects_invalid_envelope(response, message):
 
 
 async def test_request_forwards_options_and_returns_data():
-    api, requester = client(envelope({"ok": True}))
+    api, session = client(envelope({"ok": True}))
     result = await api._request(
         "POST", "/test", params={"a": "b"}, json_body={"value": 1}
     )
     assert result == {"ok": True}
-    method, url, kwargs = requester.calls[0]
+    method, url, kwargs = session.calls[0]
     assert method == "POST"
     assert url.endswith("/test")
     assert kwargs["params"] == {"a": "b"}
     assert kwargs["json"] == {"value": 1}
+    assert kwargs["headers"]["Authorization"] == "Bearer access-token"
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 499])
-async def test_terminal_oauth_error_requires_authentication(status):
-    error = ClientResponseError(
-        SimpleNamespace(real_url=OAUTH2_TOKEN_URL), (), status=status
-    )
-    api, _ = client(error)
-    with pytest.raises(BeatbotAuthenticationError):
-        await api._request("GET", "/test")
-
-
-@pytest.mark.parametrize("status", [408, 429, 500])
-async def test_transient_oauth_error_is_connection_error(status):
-    error = ClientResponseError(
-        SimpleNamespace(real_url=OAUTH2_TOKEN_URL), (), status=status
-    )
-    api, _ = client(error)
-    with pytest.raises(BeatbotConnectionError):
-        await api._request("GET", "/test")
-
-
-async def test_non_oauth_exception_is_connection_error():
-    api, _ = client(RuntimeError("offline"))
+async def test_client_error_is_connection_error():
+    api, _ = client(ClientError("offline"))
     with pytest.raises(BeatbotConnectionError, match="offline"):
         await api._request("GET", "/test")
+
+
+async def test_async_access_token_provider():
+    async def access_token():
+        return "rotated-token"
+
+    api, session = client(envelope(), access_token=access_token)
+
+    await api.get_devices()
+
+    assert session.calls[0][2]["headers"]["Authorization"] == "Bearer rotated-token"
+
+
+async def test_missing_access_token_requires_authentication():
+    api, _ = client(envelope(), access_token="")
+    with pytest.raises(BeatbotAuthenticationError, match="Missing"):
+        await api.get_devices()
 
 
 async def test_get_devices_empty():
@@ -286,11 +283,11 @@ async def test_get_device_state():
 
 
 async def test_actions():
-    api, requester = client(envelope())
+    api, session = client(envelope())
     await api.send_action("d1", "vacuum.start")
     await api.set_work_mode("d1", "quick")
     await api.set_switch("d1", "switch.child_lock", "on")
-    assert [call[2]["json"] for call in requester.calls] == [
+    assert [call[2]["json"] for call in session.calls] == [
         {"interfaceInfo": "vacuum.start"},
         {"interfaceInfo": "select.work_mode", "label": "quick"},
         {"interfaceInfo": "switch.child_lock", "label": "on"},

@@ -205,6 +205,18 @@ def status_for(category: ProductCategory, raw_status: int) -> DeviceStatus | Non
     return STATUS_BY_CATEGORY.get(category, {}).get(raw_status)
 
 
+def error_for(category: ProductCategory, error_code: int) -> DeviceError | None:
+    """Return the first active error for a product category."""
+    return next(
+        (
+            error
+            for error, bit in ERROR_BITS_BY_CATEGORY.get(category, ())
+            if error_code & bit
+        ),
+        None,
+    )
+
+
 def error_mask_for(category: ProductCategory, *, include_notices: bool = True) -> int:
     """Return the combined error mask for a product category."""
     return sum(

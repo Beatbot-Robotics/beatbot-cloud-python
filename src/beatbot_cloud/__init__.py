@@ -2,6 +2,7 @@
 
 from .auth import decode_access_token
 from .client import BeatbotClient
+from .event_client import BeatbotEventClient
 from .exceptions import (
     BeatbotAuthenticationError,
     BeatbotConnectionError,
@@ -16,6 +17,7 @@ from .protocol import (
     DeviceError,
     DeviceStatus,
     ProductCategory,
+    error_for,
     error_mask_for,
     status_for,
 )
@@ -29,6 +31,7 @@ __all__ = [
     "BeatbotConnectionReplacedError",
     "BeatbotDeviceData",
     "BeatbotEvent",
+    "BeatbotEventClient",
     "BeatbotEventError",
     "BeatbotEventStream",
     "BeatbotTokenRejectedError",
@@ -38,6 +41,7 @@ __all__ = [
     "FirmwareVersion",
     "ProductCategory",
     "STATUS_BY_CATEGORY",
+    "error_for",
     "error_mask_for",
     "status_for",
     "decode_access_token",

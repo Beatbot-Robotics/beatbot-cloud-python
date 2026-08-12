@@ -4,6 +4,7 @@ from beatbot_cloud import (
     DeviceError,
     DeviceStatus,
     ProductCategory,
+    error_for,
     error_mask_for,
     status_for,
 )
@@ -25,3 +26,11 @@ def test_clean_base_error_mask_can_exclude_notices():
     assert faults_only & (1 << 0)
     assert not faults_only & (1 << 5)
     assert DeviceError.SELF_ERR_SPRAY.value == "self_err_spray"
+
+
+def test_error_mapping_returns_first_active_error():
+    assert (
+        error_for(ProductCategory.POOL_CLEAN_BOT, (1 << 2) | (1 << 6))
+        is DeviceError.POWER_LOW
+    )
+    assert error_for(ProductCategory.POOL_CLEAN_BOT, 0) is None

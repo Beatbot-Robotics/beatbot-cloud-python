@@ -6,9 +6,10 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from http import HTTPStatus
-from typing import Any, Protocol, TypeAlias
+from inspect import isawaitable
+from typing import Any, TypeAlias
 
-from aiohttp import ClientResponseError, ClientTimeout
+from aiohttp import ClientError, ClientSession, ClientTimeout
 
 from .const import (
     DEVICE_ACTIONS_PATH,
@@ -17,7 +18,6 @@ from .const import (
     EVENTS_PATH,
     HTTP_API_TIMEOUT,
     INTERFACE_WORK_MODE,
-    OAUTH2_TOKEN_URL,
     REGION_API_BASE_URL,
     RESULT_SUCCESS_CODE,
 )
@@ -27,39 +27,36 @@ from .models import BeatbotCapability, BeatbotDeviceData, FirmwareVersion
 _LOGGER = logging.getLogger(__name__)
 
 
-class Response(Protocol):
-    """Subset of an aiohttp response used by the client."""
-
-    status: int
-    headers: dict[str, str]
-
-    async def text(self) -> str:
-        """Return the response body."""
-
-
-Requester: TypeAlias = Callable[..., Awaitable[Response]]
-
-
-def _is_oauth_reauthentication_error(err: ClientResponseError) -> bool:
-    """Return whether an OAuth token response requires user reauthentication."""
-    request_url = str(getattr(err.request_info, "real_url", "")).split("?", 1)[0]
-    return (
-        request_url == OAUTH2_TOKEN_URL
-        and HTTPStatus.BAD_REQUEST <= err.status < HTTPStatus.INTERNAL_SERVER_ERROR
-        and err.status not in (HTTPStatus.REQUEST_TIMEOUT, HTTPStatus.TOO_MANY_REQUESTS)
-    )
+AccessTokenProvider: TypeAlias = Callable[[], str | Awaitable[str]]
 
 
 class BeatbotClient:
-    """Access the Beatbot cloud API using a caller-provided request function."""
+    """Access the Beatbot cloud API."""
 
-    def __init__(self, region: str, requester: Requester) -> None:
+    def __init__(
+        self,
+        region: str,
+        session: ClientSession,
+        access_token: str | AccessTokenProvider,
+    ) -> None:
         """Initialize the client for an OAuth token's region claim."""
         try:
             self._base_url = REGION_API_BASE_URL[region]
         except KeyError as err:
             raise ValueError(f"Unknown or missing Beatbot region: {region!r}") from err
-        self._requester = requester
+        self._session = session
+        self._access_token = access_token
+
+    async def async_get_access_token(self) -> str:
+        """Return the current access token."""
+        token = (
+            self._access_token() if callable(self._access_token) else self._access_token
+        )
+        if isawaitable(token):
+            token = await token
+        if not token:
+            raise BeatbotAuthenticationError("Missing OAuth access token")
+        return token
 
     @property
     def event_stream_url(self) -> str:
@@ -79,22 +76,20 @@ class BeatbotClient:
         json_body: Any | None = None,
     ) -> Any:
         """Request and validate a Beatbot result envelope."""
+        access_token = await self.async_get_access_token()
         try:
-            response = await self._requester(
+            response = await self._session.request(
                 method,
                 f"{self._base_url}{path}",
                 params=params,
                 json=json_body,
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {access_token}",
+                },
                 timeout=ClientTimeout(total=HTTP_API_TIMEOUT),
             )
-        except ClientResponseError as err:
-            if _is_oauth_reauthentication_error(err):
-                raise BeatbotAuthenticationError(
-                    "OAuth token refresh rejected; reauthentication required"
-                ) from err
-            raise BeatbotConnectionError(str(err)) from err
-        except Exception as err:
+        except ClientError as err:
             raise BeatbotConnectionError(str(err)) from err
 
         body = await response.text()
