@@ -29,6 +29,7 @@ _RECONNECT_DELAYS = (1.0, 2.0, 4.0, 8.0, 30.0, 60.0)
 _RECONNECT_JITTER = 0.2
 
 EventCallback = Callable[[BeatbotEvent], None | Awaitable[None]]
+DeviceCallback = Callable[[str], None | Awaitable[None]]
 ReconnectCallback = Callable[[], None | Awaitable[None]]
 TokenRefreshCallback = Callable[[str], str | Awaitable[str]]
 
@@ -41,8 +42,11 @@ class BeatbotEventClient:
         session: ClientSession,
         url: str,
         access_token: AccessTokenProvider,
-        event_callback: EventCallback,
+        event_callback: EventCallback | None = None,
         *,
+        state_callback: EventCallback | None = None,
+        device_added_callback: DeviceCallback | None = None,
+        device_removed_callback: DeviceCallback | None = None,
         reconnect_callback: ReconnectCallback | None = None,
         token_refresh_callback: TokenRefreshCallback | None = None,
     ) -> None:
@@ -51,6 +55,9 @@ class BeatbotEventClient:
         self._url = url
         self._access_token = access_token
         self._event_callback = event_callback
+        self._state_callback = state_callback
+        self._device_added_callback = device_added_callback
+        self._device_removed_callback = device_removed_callback
         self._reconnect_callback = reconnect_callback
         self._token_refresh_callback = token_refresh_callback
         self._stream: BeatbotEventStream | None = None
@@ -160,13 +167,35 @@ class BeatbotEventClient:
                 if event.event_id in self._seen_event_ids:
                     continue
                 self._remember_event(event.event_id)
-                result = self._event_callback(event)
-                if isawaitable(result):
-                    await result
+                await self._async_dispatch_event(event)
         finally:
             await stream.close()
             if self._stream is stream:
                 self._stream = None
+
+    async def _async_dispatch_event(self, event: BeatbotEvent) -> None:
+        """Route cloud event types to consumer callbacks."""
+        if self._event_callback is not None:
+            result = self._event_callback(event)
+            if isawaitable(result):
+                await result
+        if event.event_type in ("properties_changed", "status"):
+            if self._state_callback is not None:
+                result = self._state_callback(event)
+                if isawaitable(result):
+                    await result
+        elif event.event_type == "device_added":
+            if self._device_added_callback is not None:
+                result = self._device_added_callback(event.device_id)
+                if isawaitable(result):
+                    await result
+        elif (
+            event.event_type == "device_removed"
+            and self._device_removed_callback is not None
+        ):
+            result = self._device_removed_callback(event.device_id)
+            if isawaitable(result):
+                await result
 
     async def async_close(self) -> None:
         """Stop receiving and close the current connection."""
