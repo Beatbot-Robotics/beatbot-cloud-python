@@ -92,7 +92,11 @@ class BeatbotClient:
         except (TimeoutError, ClientError) as err:
             raise BeatbotConnectionError(str(err)) from err
 
-        body = await response.text()
+        try:
+            body = await response.text()
+        except (TimeoutError, ClientError) as err:
+            raise BeatbotConnectionError(str(err)) from err
+
         if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
             raise BeatbotAuthenticationError(f"Unauthorized: {response.status}")
         if response.status >= HTTPStatus.BAD_REQUEST:

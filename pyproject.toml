@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "beatbot-cloud"
-version = "0.4.2"
+version = "0.4.3"
 description = "Asynchronous Python client for the Beatbot cloud API"
 readme = "README.md"
 requires-python = ">=3.11"
