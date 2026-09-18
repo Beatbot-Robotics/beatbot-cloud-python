@@ -122,6 +122,28 @@ async def test_timeout_is_connection_error():
         await api._request("GET", "/test")
 
 
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (ClientError("body read failed"), "body read failed"),
+        (TimeoutError("body read timed out"), "body read timed out"),
+    ],
+    ids=["client-error", "timeout"],
+)
+async def test_body_read_error_is_connection_error(error, message):
+    """Reading the response body cannot escape as a raw aiohttp error."""
+    response = Response("{}")
+
+    async def failing_text():
+        raise error
+
+    response.text = failing_text
+    api, _ = client(response)
+
+    with pytest.raises(BeatbotConnectionError, match=message):
+        await api._request("GET", "/test")
+
+
 async def test_async_access_token_provider():
     async def access_token():
         return "rotated-token"
