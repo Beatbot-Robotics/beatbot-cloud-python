@@ -40,10 +40,10 @@ class BeatbotDeviceData:
     device_id: str
     product_id: str
     product_category: str
-    work_status: int
+    work_status: int | None
     work_mode: int
-    error_code: int
-    battery_level: int
+    error_code: int | None
+    battery_level: int | None
     versions: list[FirmwareVersion]
     is_online: bool
     child_lock: bool = False

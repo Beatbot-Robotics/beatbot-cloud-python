@@ -320,3 +320,21 @@ async def test_actions():
         {"interfaceInfo": "select.work_mode", "label": "quick"},
         {"interfaceInfo": "switch.child_lock", "label": "on"},
     ]
+
+
+async def test_discovery_runtime_values_remain_unknown_until_reported() -> None:
+    """Distinguish missing state from explicitly reported zero values."""
+    api, _ = client(envelope({"devices": [{"deviceId": "d1", "isOnline": True}]}))
+    (device,) = await api.get_devices()
+    assert device.work_status is None
+    assert device.battery_level is None
+    assert device.error_code is None
+
+    device.apply_state({"vacuum.state": 2})
+    assert device.work_status == 2
+    assert device.battery_level is None
+    assert device.error_code is None
+
+    device.apply_state({"vacuum.battery": 0, "sensor.error": 0})
+    assert device.battery_level == 0
+    assert device.error_code == 0
